@@ -9,8 +9,9 @@
 #   songs:   Title ‒ Artist • Album <TAB> playURL <TAB> file
 #   players: ▶ Name ‒ IP <TAB> IP <TAB> IP
 set -euo pipefail
+(( BASH_VERSINFO[0] >= 5 )) || { echo "bluos needs bash >= 5 (macOS: brew install bash)" >&2; exit 1; }
 self=$(readlink -f "${BASH_SOURCE[0]}")
-app="bluos 1.3.0"  # name and version shown at the top of the UI
+app="bluos 1.4.0"  # name and version shown at the top of the UI
 
 # Config: host=<player IP>, share=<SMB share on the player> (default "shared"). Written when a player is chosen.
 config=${XDG_CONFIG_HOME:-$HOME/.config}/bluos/config
@@ -23,6 +24,8 @@ save_config() { mkdir -p "${config%/*}"; printf 'host=%s\nshare=%s\n' "$BLUOS_HO
 
 # --- BluOS HTTP API (port 11000) ---
 
+TAB=$'\t'  # BSD sed has no \t in replacements
+
 blu()    { curl -s --max-time 3 "http://$BLUOS_HOST:11000/${1#/}"; }
 # Browse with a raw (unencoded) key, e.g. "LocalMusic:MG/LocalMusic-Album?album=X&artist=Y"
 browse() { curl -sG --max-time 10 "http://$BLUOS_HOST:11000/Browse" --data-urlencode "key=$1"; }
@@ -30,14 +33,23 @@ unxml()  { sed 's/&amp;/\&/g; s/&quot;/"/g; s/&apos;/'"'"'/g; s/&#39;/'"'"'/g; s
 volume() { blu Volume | sed -n 's:.*<volume[^>]*>\(.*\)</volume>.*:\1:p'; }
 urldecode() { local f=${1//+/ }; printf '%b' "${f//%/\\x}"; }
 
+# This machine's IPv4 address on the LAN
+local_ip() {
+    if [[ $OSTYPE == darwin* ]]; then
+        ipconfig getifaddr "$(route -n get default | awk '/interface:/ { print $2 }')"
+    else
+        ip -4 -o route get 1.1.1.1 | grep -oE 'src [0-9.]+' | cut -d' ' -f2
+    fi
+}
+
 # BluOS players on the local network ("IP Name"); assumes a /24 network
 scan() {
     local net
-    net=$(ip -4 -o route get 1.1.1.1 | grep -oE 'src [0-9.]+' | cut -d' ' -f2)
+    net=$(local_ip)
     net=${net%.*}
     for i in {1..254}; do
-        (timeout 1 bash -c "echo >/dev/tcp/$net.$i/11000" 2>/dev/null &&
-            echo "$net.$i $(BLUOS_HOST=$net.$i blu SyncStatus | grep -oE ' name="[^"]*"' | cut -d'"' -f2)") &
+        (s=$(curl -s --connect-timeout 1 --max-time 2 "http://$net.$i:11000/SyncStatus") &&
+            echo "$net.$i $(grep -oE ' name="[^"]*"' <<<"$s" | cut -d'"' -f2)") &
     done
     wait
 }
@@ -53,7 +65,7 @@ album_rows() {
     sections "LocalMusic:bySection:Album//library/v1/Albums?service=LocalMusic" |
         while IFS= read -r key; do
             browse "$key" |
-                sed -nE 's/.*browseKey="([^"]*)" contextMenuKey="[^"]*" playURL="([^"]*)" text="([^"]*)" text2="([^"]*)".*/\4\t\3\t\2\t\1/p' | unxml
+                sed -nE 's/.*browseKey="([^"]*)" contextMenuKey="[^"]*" playURL="([^"]*)" text="([^"]*)" text2="([^"]*)".*/\4'"$TAB"'\3'"$TAB"'\2'"$TAB"'\1/p' | unxml
         done
 }
 
@@ -97,7 +109,7 @@ tracks() {
     status=$(blu Status)
     cur=$(tag fn)
     browse "$1" |
-        sed -nE 's/.* playURL="[^"]*file=([^"&]*)[^"]*" autoplayURL="([^"]*)" text="([^"]*)"( text2="[^"]*")? duration="([0-9]*)".*/\1\t\2\t\3\t\5/p' |
+        sed -nE 's/.* playURL="[^"]*file=([^"&]*)[^"]*" autoplayURL="([^"]*)" text="([^"]*)"( text2="[^"]*")? duration="([0-9]*)".*/\1'"$TAB"'\2'"$TAB"'\3'"$TAB"'\5/p' |
         unxml |
         while IFS=$'\t' read -r f u t d; do
             f=$(urldecode "$f")
@@ -112,8 +124,21 @@ songs() {
     sections "LocalMusic:bySection:Song//library/v1/Songs?all=1&service=LocalMusic" |
         while IFS= read -r key; do
             browse "$key" |
-                sed -nE 's/.* playURL="([^"]*file=([^"&]*)[^"]*)" text="([^"]*)" text2="([^"]*)".*/\3 ‒ \4\t\1\t\2/p' | unxml
+                sed -nE 's/.* playURL="([^"]*file=([^"&]*)[^"]*)" text="([^"]*)" text2="([^"]*)".*/\3 ‒ \4'"$TAB"'\1'"$TAB"'\2/p' | unxml
         done
+}
+
+# Local path of the player's SMB share //host/<share>, mounted if needed (gvfs on Linux, mount_smbfs on macOS)
+smb_root() {
+    if [[ $OSTYPE == darwin* ]]; then
+        local dir=$cache/smb-$BLUOS_HOST-$share
+        mkdir -p "$dir"
+        mount | grep -qF " on $dir " || mount_smbfs -N "//guest@$BLUOS_HOST/$share" "$dir" &>/dev/null || true
+        echo "$dir"
+    else
+        gio mount -a "smb://$BLUOS_HOST/$share" </dev/null &>/dev/null || true
+        echo "/run/user/$UID/gvfs/smb-share:server=$BLUOS_HOST,share=$share"
+    fi
 }
 
 # Release year from the first track's tags via the player's SMB share (/var/mnt/SMB-*/ = //host/<share>/).
@@ -123,15 +148,15 @@ year() {  # $1 = browseKey
     f=$(browse "$1" | grep -om1 'file=[^"&]*' || true)
     f=$(urldecode "${f#file=}")
     ffprobe -v quiet -show_entries format_tags=date,year -of default=nw=1:nk=1 \
-        "/run/user/$UID/gvfs/smb-share:server=$BLUOS_HOST,share=$share/${f#/var/mnt/SMB-*/}" |
+        "$smb/${f#/var/mnt/SMB-*/}" |
         grep -om1 '^[0-9]\{4\}' || echo 9999
 }
 
 # Sorted by artist, year, album
 load_albums() {
-    local a b p k y years=$cache/years-$BLUOS_HOST.tsv
-    gio mount -a "smb://$BLUOS_HOST/$share" </dev/null &>/dev/null || true
+    local a b p k y years=$cache/years-$BLUOS_HOST.tsv smb
     mkdir -p "$cache"; touch "$years"
+    smb=$(smb_root)
     album_rows | while IFS=$'\t' read -r a b p k; do
         y=$(awk -F'\t' -v k="$k" '$1 == k { print $2; exit }' "$years")
         if [[ -z $y ]]; then
@@ -247,8 +272,8 @@ case "${1:-}" in
         else to_albums first; fi
         exit ;;
     _key)  # $2 = key, $3-$5 = {1} {2} {4}, $6 = {n}. g waits 1 s for the next key (gg, gt, gT).
-        tab=$(st tab) ms=$(date +%s%3N) pending=0
-        (( ms - $(st g || echo 0) < 1000 )) && pending=1
+        tab=$(st tab) g=$(st g) ms=${EPOCHREALTIME/[.,]/} ms=${ms%???} pending=0
+        (( ms - ${g:-0} < 1000 )) && pending=1
         put g 0
         case "$2$pending" in
             g0) put g "$ms" ;;
