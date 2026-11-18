@@ -1,6 +1,6 @@
 # Maintainer: sukkergris
 pkgname=bluos-tui-git
-pkgver=r1
+pkgver=r2.f9b8e4b
 pkgrel=1
 pkgdesc='Terminal client for BluOS players (unofficial)'
 arch=(any)
