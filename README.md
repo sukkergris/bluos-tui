@@ -6,14 +6,58 @@ Terminal client for [BluOS](https://www.bluesound.com/bluos/) players (Bluesound
 
 ## Install
 
-Arch Linux:
+### Requirements
+
+- A BluOS player on the same local network as your computer.
+- Music on the player's own library (USB drive or network share) – that is what bluos-tui browses.
+- `bash`, `fzf` ≥ 0.63, `curl`, `ffmpeg` (for `ffprobe`), `gvfs-smb` (for `gio`), `iproute2`.
+
+### Arch Linux (recommended)
 
 ```bash
-git clone https://github.com/sukkergris/bluos-tui.git
-cd bluos-tui && makepkg -si
+git clone https://github.com/sukkergris/bluos-tui.git ~/Code/bluos-tui
+cd ~/Code/bluos-tui
+makepkg -si          # builds the package, installs the dependencies with pacman and installs bluos to /usr/bin
 ```
 
-Other systems: put `bin/bluos` on your `PATH` and install the dependencies: `bash`, `fzf` ≥ 0.63, `curl`, `ffmpeg` (`ffprobe`), `gvfs-smb` (`gio`), `iproute2`.
+Update:
+
+```bash
+cd ~/Code/bluos-tui && git pull && makepkg -si
+```
+
+Uninstall:
+
+```bash
+sudo pacman -R bluos-tui-git
+rm -rf ~/.config/bluos ~/.cache/bluos   # optional: config and year cache
+```
+
+### Other Linux distributions
+
+Install the requirements with your package manager (check `fzf --version`; many distributions ship an older one – get a release from [GitHub](https://github.com/junegunn/fzf/releases)). Then link the script onto your `PATH`:
+
+```bash
+git clone https://github.com/sukkergris/bluos-tui.git ~/Code/bluos-tui
+mkdir -p ~/.local/bin
+ln -s ~/Code/bluos-tui/bin/bluos ~/.local/bin/bluos   # update later with git pull
+```
+
+### First run
+
+```bash
+bluos scan    # should list your player(s), e.g. "192.168.1.50 Living Room"
+bluos         # opens the UI
+```
+
+On first run bluos uses the first player it finds and saves it in `~/.config/bluos/config` (see [Config](#config)). Pick another one on the Players tab (`gT`, then `enter`). The first start reads release years from every album (~0.3 s per album); later starts are fast.
+
+### Troubleshooting
+
+- **"No BluOS player found":** the computer and player must be on the same /24 network, and port 11000 must not be blocked. Set `host=<player IP>` in `~/.config/bluos/config` (the IP is shown in the BluOS app under Settings → Diagnostics or in your router).
+- **Albums are not sorted by year:** the year is read from the player's SMB share. Check that `gio mount -a smb://<player IP>/shared` works and that `gvfs-smb` is installed. If your share has another name (`smbclient -N -L //<player IP>`), set `share=` in the config. Then delete `~/.cache/bluos/` so the years are read again.
+- **fzf error about unknown options (`--no-input`, `--footer`):** your fzf is older than 0.63.
+- **Empty album list:** the player has no local library, or it is still indexing – check the Library in the BluOS app.
 
 ## Usage
 
