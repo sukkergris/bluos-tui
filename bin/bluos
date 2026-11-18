@@ -1,0 +1,320 @@
+#!/usr/bin/env bash
+# bluos – terminal client for BluOS players: albums and tracks in fzf with vim keys, "now playing" in the footer.
+# Unofficial; not affiliated with Bluesound/Lenbrook.
+#
+# The UI calls itself (_enter/_vol/_key/_scope/_tracks/_preview/_now/_ticker) from fzf key bindings and the ticker loop.
+# Rows (fzf fields separated by TAB or " ‒ " (U+2012), so artist and album are searchable separately):
+#   albums:  Artist ‒ Album <TAB> playURL     <TAB> browseKey
+#   tracks:  ▶ N. Title m:ss <TAB> (empty) <TAB> autoplayURL <TAB> file
+#   songs:   Title ‒ Artist • Album <TAB> playURL <TAB> file
+#   players: ▶ Name ‒ IP <TAB> IP <TAB> IP
+set -euo pipefail
+self=$(readlink -f "${BASH_SOURCE[0]}")
+app="bluos 1.3.0"  # name and version shown at the top of the UI
+
+# Config: host=<player IP>, share=<SMB share on the player> (default "shared"). Written when a player is chosen.
+config=${XDG_CONFIG_HOME:-$HOME/.config}/bluos/config
+cache=${XDG_CACHE_HOME:-$HOME/.cache}/bluos
+host="" share=shared
+# shellcheck source=/dev/null
+[[ -f $config ]] && source "$config"
+BLUOS_HOST=${BLUOS_HOST:-$host}
+save_config() { mkdir -p "${config%/*}"; printf 'host=%s\nshare=%s\n' "$BLUOS_HOST" "$share" >"$config"; }
+
+# --- BluOS HTTP API (port 11000) ---
+
+blu()    { curl -s --max-time 3 "http://$BLUOS_HOST:11000/${1#/}"; }
+# Browse with a raw (unencoded) key, e.g. "LocalMusic:MG/LocalMusic-Album?album=X&artist=Y"
+browse() { curl -sG --max-time 10 "http://$BLUOS_HOST:11000/Browse" --data-urlencode "key=$1"; }
+unxml()  { sed 's/&amp;/\&/g; s/&quot;/"/g; s/&apos;/'"'"'/g; s/&#39;/'"'"'/g; s/&#34;/"/g; s/&lt;/</g; s/&gt;/>/g'; }
+volume() { blu Volume | sed -n 's:.*<volume[^>]*>\(.*\)</volume>.*:\1:p'; }
+urldecode() { local f=${1//+/ }; printf '%b' "${f//%/\\x}"; }
+
+# BluOS players on the local network ("IP Name"); assumes a /24 network
+scan() {
+    local net
+    net=$(ip -4 -o route get 1.1.1.1 | grep -oE 'src [0-9.]+' | cut -d' ' -f2)
+    net=${net%.*}
+    for i in {1..254}; do
+        (timeout 1 bash -c "echo >/dev/tcp/$net.$i/11000" 2>/dev/null &&
+            echo "$net.$i $(BLUOS_HOST=$net.$i blu SyncStatus | grep -oE ' name="[^"]*"' | cut -d'"' -f2)") &
+    done
+    wait
+}
+
+# The library is only served per letter section; print the browseKey of each section of $1 (e.g. Album, Song)
+sections() {
+    browse "$1" | grep -oE 'browseKey="[^"]*" text="[^"]*" text2="[0-9]+" type="section"' |
+        cut -d'"' -f2 | unxml | sed 's/limit=50/limit=1000/'
+}
+# Albums as TSV: "Artist<TAB>Album<TAB>playURL<TAB>browseKey"
+album_rows() {
+    local key
+    sections "LocalMusic:bySection:Album//library/v1/Albums?service=LocalMusic" |
+        while IFS= read -r key; do
+            browse "$key" |
+                sed -nE 's/.*browseKey="([^"]*)" contextMenuKey="[^"]*" playURL="([^"]*)" text="([^"]*)" text2="([^"]*)".*/\4\t\3\t\2\t\1/p' | unxml
+        done
+}
+
+# --- UI ---
+
+st()  { cat "$BLUOS_DIR/$1" 2>/dev/null || true; }  # read state
+put() { echo "$2" >"$BLUOS_DIR/$1"; }
+# The chosen player is kept in state, so all sub-calls follow along when it changes (read = no process)
+[[ -n ${BLUOS_DIR:-} && -s ${BLUOS_DIR:-}/host ]] && read -r BLUOS_HOST <"$BLUOS_DIR/host"
+
+# Field from the latest /Status (stored in $status)
+tag() { grep -oE "<$1>[^<]*" <<<"$status" | head -1 | sed 's/.*>//' | unxml || true; }
+mmss() { printf '%d:%02d' $(($1 / 60)) $(($1 % 60)); }
+
+# "Now playing" for the footer. Runs every second, so all of /Status is parsed in one awk call.
+now() {
+    blu Status | awk -v RS='<' -F'>' '
+        function t(s) { return sprintf("%d:%02d", s / 60, s % 60) }
+        NF > 1 && !($1 in v) {
+            gsub(/&amp;/, "\\&", $2); gsub(/&quot;|&#34;/, "\"", $2); gsub(/&apos;|&#39;/, "\047", $2)
+            v[$1] = $2
+        }
+        END {
+            print (v["state"] ~ /play|stream/ ? "▶" : v["state"] == "pause" ? "⏸" : "■") " " v["title1"]
+            print "  " v["title2"] (v["title3"] != "" ? " – " v["title3"] : "")
+            if (v["totlen"] > 0) {
+                n = int(v["secs"] * 30 / v["totlen"]); bar = ""
+                for (i = 0; i < 30; i++) bar = bar (i < n ? "━" : "─")
+                print "  " t(v["secs"]) " " bar " " t(v["totlen"])
+            }
+            split("▁ ▂ ▃ ▃ ▄ ▅ ▅ ▆ ▇ █", r, " "); vb = ""  # rising volume staircase, 10 steps
+            for (i = 1; i <= 10; i++) vb = vb (v["volume"] >= i * 10 - 5 ? r[i] : "·")
+            print "  " (v["mute"] == 1 ? "mute" : "vol") " " vb " " v["volume"] "  " v["streamFormat"]
+        }'
+}
+
+# The album's tracks; the one playing (matched on file) is green.
+# autoplayURL starts the album from that track and plays the rest afterwards.
+tracks() {
+    local f u t d cur
+    status=$(blu Status)
+    cur=$(tag fn)
+    browse "$1" |
+        sed -nE 's/.* playURL="[^"]*file=([^"&]*)[^"]*" autoplayURL="([^"]*)" text="([^"]*)"( text2="[^"]*")? duration="([0-9]*)".*/\1\t\2\t\3\t\5/p' |
+        unxml |
+        while IFS=$'\t' read -r f u t d; do
+            f=$(urldecode "$f")
+            t="$t  $(mmss "${d:-0}")"
+            if [[ $f == "$cur" ]]; then printf '\e[1;32m▶ %s\e[0m\t\t%s\t%s\n' "$t" "$u" "$f"; else printf '  %s\t\t%s\t%s\n' "$t" "$u" "$f"; fi
+        done
+}
+
+# All tracks in the library (fetched the first time they are needed)
+songs() {
+    local key
+    sections "LocalMusic:bySection:Song//library/v1/Songs?all=1&service=LocalMusic" |
+        while IFS= read -r key; do
+            browse "$key" |
+                sed -nE 's/.* playURL="([^"]*file=([^"&]*)[^"]*)" text="([^"]*)" text2="([^"]*)".*/\3 ‒ \4\t\1\t\2/p' | unxml
+        done
+}
+
+# Release year from the first track's tags via the player's SMB share (/var/mnt/SMB-*/ = //host/<share>/).
+# ~0.3 s per album over the network, so years are cached per browseKey (delete the file to re-read); unknown = 9999 (last).
+year() {  # $1 = browseKey
+    local f
+    f=$(browse "$1" | grep -om1 'file=[^"&]*' || true)
+    f=$(urldecode "${f#file=}")
+    ffprobe -v quiet -show_entries format_tags=date,year -of default=nw=1:nk=1 \
+        "/run/user/$UID/gvfs/smb-share:server=$BLUOS_HOST,share=$share/${f#/var/mnt/SMB-*/}" |
+        grep -om1 '^[0-9]\{4\}' || echo 9999
+}
+
+# Sorted by artist, year, album
+load_albums() {
+    local a b p k y years=$cache/years-$BLUOS_HOST.tsv
+    gio mount -a "smb://$BLUOS_HOST/$share" </dev/null &>/dev/null || true
+    mkdir -p "$cache"; touch "$years"
+    album_rows | while IFS=$'\t' read -r a b p k; do
+        y=$(awk -F'\t' -v k="$k" '$1 == k { print $2; exit }' "$years")
+        if [[ -z $y ]]; then
+            y=$(year "$k")
+            printf '%s\t%s\n' "$k" "$y" >>"$years"
+        fi
+        printf '%s\t%s\t%s\t%s\t%s\n' "$a" "$y" "$b" "$p" "$k"
+    done | sort -f -t$'\t' -k1,1 -k2,2 -k3,3 | awk -F'\t' -v OFS='\t' '{print $1 " ‒ " $3, $4, $5}' >"$BLUOS_DIR/albums"
+}
+
+# Players on the network; ▶ = the chosen one
+players() {
+    scan | awk -v cur="$BLUOS_HOST" \
+        '{ip = $1; name = substr($0, length(ip) + 2); print (ip == cur ? "▶ " : "  ") name " ‒ " ip "\t" ip "\t" ip}'
+}
+
+# Player settings for the preview. repeat: 0 = queue, 1 = track, 2 = off
+player_info() {  # $1 = IP
+    local BLUOS_HOST=$1 sync
+    sync=$(blu SyncStatus | grep -oE '<SyncStatus [^>]*>' || true)
+    status=$(blu Status)
+    a() { grep -oE " $1=\"[^\"]*\"" <<<"$sync" | cut -d'"' -f2 || true; }
+    local rep=(queue track off) shuf=(off on)
+    printf '%-10s %s\n' Name "$(a name)" Model "$(a brand) $(a modelName)" Firmware "$(a version)" \
+        IP "$1" MAC "$(a mac)" Volume "$(a volume)" "" "" \
+        Shuffle "${shuf[$(tag shuffle)]:-?}   (s toggles)" Repeat "${rep[$(tag repeat)]:-?}   (R cycles)"
+}
+
+# Views: print fzf actions. The label is set last with "action:text", so parentheses in names don't break it.
+nth() { if [[ $(st scope) == artist ]]; then echo 1; else echo 2; fi; }
+to_albums() {  # $1 = action after reload (pos or first)
+    put tab albums
+    echo "reload-sync(cat $BLUOS_DIR/albums)+$1+change-nth($(nth))+change-prompt($(st scope)> )+change-preview-window(right,45%)+change-border-label: $app │ [ Albums ]  Tracks  Players "
+}
+to_tracks() {  # $1 = artist, $2 = album, $3 = browseKey, $4 = index in the album list
+    put tab tracks; put album "$3"; put apos "$4"
+    echo "clear-query+reload-sync($self _tracks)+first+change-nth(1)+change-prompt(track> )+change-preview-window(hidden)+change-border-label: $app │ Albums  [ $1 – $2 ]  Players "
+}
+to_songs() {
+    put tab songs
+    [[ -s $BLUOS_DIR/songs ]] || songs >"$BLUOS_DIR/songs"
+    echo "reload-sync(cat $BLUOS_DIR/songs)+first+change-nth(1)+change-prompt(track> )+change-preview-window(hidden)+change-border-label: $app │ Albums  [ All tracks ]  Players "
+}
+to_players() {
+    put tab players
+    [[ -s $BLUOS_DIR/players ]] || players >"$BLUOS_DIR/players"
+    echo "clear-query+reload-sync(cat $BLUOS_DIR/players)+first+change-nth(1)+change-prompt(player> )+change-preview-window(right,45%)+change-border-label: $app │ Albums  Tracks  [ Players ] "
+}
+back_to_albums() {
+    [[ $(st scope) == track ]] && put scope album
+    echo "clear-query+$(to_albums "pos($(($(st apos) + 1)))")"
+}
+
+usage() {
+    cat <<EOF
+$app – terminal client for BluOS players (unofficial)
+
+Usage: bluos [command]
+
+  (none)        open the UI
+  play | pause  start / pause playback
+  next | prev   next / previous track
+  vol [N|+N|-N] show or set volume
+  status        show what is playing
+  scan          list BluOS players on the local network
+  albums        list albums in the library
+
+Config: $config (host=, share=)
+EOF
+}
+
+# First run: use the first player found and save it
+if [[ -z $BLUOS_HOST && ${1:-} != @(scan|help|-h|--help) ]]; then
+    BLUOS_HOST=$(scan | head -1 | cut -d' ' -f1)
+    [[ -n $BLUOS_HOST ]] || { echo "No BluOS player found; set host= in $config" >&2; exit 1; }
+    save_config
+fi
+
+case "${1:-}" in
+    help | -h | --help) usage; exit ;;
+    play)   blu Play >/dev/null; exit ;;
+    pause)  blu Pause >/dev/null; exit ;;
+    next)   blu Skip >/dev/null; exit ;;
+    prev)   blu Back >/dev/null; exit ;;
+    vol)
+        case ${2:-} in
+            "") printf '%s\n' "$(volume)" ;;
+            [+-]*) blu "Volume?level=$(( $(volume) + $2 ))" >/dev/null ;;
+            *) blu "Volume?level=$2" >/dev/null ;;
+        esac
+        exit ;;
+    status) now; exit ;;
+    scan)   scan | sort -t. -k4,4n; exit ;;
+    albums) album_rows | sort -f -t$'\t' -k1,1 -k2,2 | awk -F'\t' '{print $1 " – " $2}'; exit ;;
+    # Internal sub-calls from fzf
+    _cmd) blu "$2" >/dev/null; exit ;;
+    _now) now; exit ;;
+    _tracks) tracks "$(st album)"; exit ;;
+    _preview) if [[ $(st tab) == players ]]; then player_info "$2"; else tracks "$2" | cut -f1; fi; exit ;;
+    _enter)  # $2 = {3}: playURL, or IP on the Players tab (switch player, save it and load its library)
+        if [[ $(st tab) == players ]]; then
+            put host "$2"; BLUOS_HOST=$2; save_config
+            load_albums; rm -f "$BLUOS_DIR/songs" "$BLUOS_DIR/players"; put apos 0
+            back_to_albums
+        else
+            blu "$2" >/dev/null; echo "refresh-preview+transform-footer($self _now)"
+        fi
+        exit ;;
+    _scope)  # tab: search album → artist → track (all tracks) → album; the query is kept
+        case $(st scope) in album) put scope artist ;; artist) put scope track ;; *) put scope album ;; esac
+        if [[ $(st scope) == track ]]; then to_songs
+        elif [[ $(st tab) == albums ]]; then echo "change-nth($(nth))+change-prompt($(st scope)> )"
+        else to_albums first; fi
+        exit ;;
+    _key)  # $2 = key, $3-$5 = {1} {2} {4}, $6 = {n}. g waits 1 s for the next key (gg, gt, gT).
+        tab=$(st tab) ms=$(date +%s%3N) pending=0
+        (( ms - $(st g || echo 0) < 1000 )) && pending=1
+        put g 0
+        case "$2$pending" in
+            g0) put g "$ms" ;;
+            g1) echo first ;;
+            t1) case $tab in albums) to_tracks "$3" "$4" "$5" "$6" ;; tracks | songs) to_players ;; *) back_to_albums ;; esac ;;
+            T1) case $tab in albums) to_players ;; *) back_to_albums ;; esac ;;
+            l?) [[ $tab == albums ]] && to_tracks "$3" "$4" "$5" "$6" ;;
+            h?) [[ $tab != albums ]] && back_to_albums ;;
+            # Players tab: r rescans, s/R toggles shuffle/repeat on the player under the cursor ($5 = IP)
+            r?) [[ $tab == players ]] && { players >"$BLUOS_DIR/players"; echo "reload-sync(cat $BLUOS_DIR/players)"; } ;;
+            s? | R?)
+                if [[ $tab == players ]]; then
+                    BLUOS_HOST=$5 status=$(blu Status)
+                    if [[ $2 == s ]]; then blu "Shuffle?state=$((1 - $(tag shuffle)))"; else blu "Repeat?state=$((($(tag repeat) + 1) % 3))"; fi >/dev/null
+                    echo refresh-preview
+                fi ;;
+        esac
+        exit 0 ;;
+    _ticker)  # update the footer every second; when the track changes, also the preview and track list
+        last=""
+        while sleep 1; do
+            read -r BLUOS_HOST <"$BLUOS_DIR/host" || true
+            np=$(now) || continue
+            act="change-footer:$np"
+            if [[ ${np%%$'\n'*} != "$last" ]]; then
+                act="refresh-preview+$act"
+                [[ $(st tab) == tracks ]] && act="track-current+reload($self _tracks)+$act"
+            fi
+            curl -s --unix-socket "$BLUOS_DIR/fzf.sock" -XPOST http://localhost -d "$act" >/dev/null && last=${np%%$'\n'*} || true
+        done ;;
+    "") ;;
+    *) usage >&2; exit 1 ;;
+esac
+
+export BLUOS_DIR="${XDG_RUNTIME_DIR:-/tmp}/bluos-$$"
+mkdir -p "$BLUOS_DIR"
+put tab albums; put scope album; put apos 0; put host "$BLUOS_HOST"
+load_albums
+"$self" _ticker &
+trap 'kill $! 2>/dev/null; rm -rf "$BLUOS_DIR"' EXIT
+
+keys='j,k,g,G,h,l,t,T,r,s,R,space,n,p,+,-,q,/,?'
+help='j/k  ctrl-d/u  gg/G   move · half page · top/bottom
+l/h                   albums ⇄ tracks
+gt/gT                 tabs: albums → tracks → players
+/  tab  esc           search · cycle album/artist/track · back
+enter                 play album / from track · choose player
+space  n/p  +/-       pause · next/previous · volume
+r  s  R               players: scan network · shuffle · repeat
+?  q                  shortcuts · quit'
+key="transform($self _key {k} {1} {2} {4} {n})"
+fzf <"$BLUOS_DIR/albums" --listen="$BLUOS_DIR/fzf.sock" --no-input --ansi --id-nth=3 \
+    --delimiter=$'\t| ‒ ' --with-nth=1,2 --nth=2 --prompt 'album> ' \
+    --layout=reverse --border --border-label " $app │ [ Albums ]  Tracks  Players " \
+    --header "$help" --footer ' ' --footer-border=top --footer-label ' Press ? for shortcuts ' \
+    --bind 'start:toggle-header,?:toggle-header' \
+    --preview "$self _preview {4}" --preview-window=right,45% \
+    --bind 'j:down,k:up,G:last,q:abort,ctrl-d:half-page-down,ctrl-u:half-page-up' \
+    --bind "g:${key//\{k\}/g},t:${key//\{k\}/t},T:${key//\{k\}/T},h:${key//\{k\}/h},l:${key//\{k\}/l}" \
+    --bind "r:${key//\{k\}/r},s:${key//\{k\}/s},R:${key//\{k\}/R}" \
+    --bind "tab:transform($self _scope)" \
+    --bind "enter:transform($self _enter {3})" \
+    --bind "space:execute-silent($self _cmd 'Pause?toggle=1')+refresh-preview+transform-footer($self _now)" \
+    --bind "n:execute-silent($self _cmd Skip)+refresh-preview" \
+    --bind "p:execute-silent($self _cmd Back)+refresh-preview" \
+    --bind "+:execute-silent($self vol +5)+transform-footer($self _now)" \
+    --bind "-:execute-silent($self vol -5)+transform-footer($self _now)" \
+    --bind "/:show-input+unbind($keys)" \
+    --bind "esc:hide-input+rebind($keys)"
