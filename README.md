@@ -25,9 +25,9 @@ cd ~/Code/bluos-tui
 ./install.sh         # installs the dependencies and bluos to /usr/bin
 ```
 
-Update or reinstall: `~/Code/bluos-tui/install.sh` (runs `git pull` and `makepkg -sif`; it builds what is pushed to GitHub, not local changes)
-Development: `./dev.sh` copies the local `bin/bluos` to `/usr/bin/bluos`, uncommitted changes included. Run `./install.sh` to go back to the packaged version.
+Update: `~/Code/bluos-tui/install.sh`. It pulls the latest version from GitHub, builds the package and installs it with pacman.
 Uninstall: `sudo pacman -R bluos-tui-git`
+Changing the code? See [Development](#development).
 
 ### macOS
 
@@ -150,6 +150,28 @@ share=shared        # the player's SMB share (used to read release years)
 - [ ] **Queue** tab (`/Playlist`).
 - [ ] Not tested yet: `s`/`R` (shuffle/repeat) and switching to another player.
 - [ ] Alternative: `.m3u` files on the SMB share are imported by BluOS as playlists.
+
+## Development
+
+Two scripts install the app (Arch Linux; on the other systems you copy `bin/bluos` yourself, see [Install](#install)). Users only need `install.sh`; `dev.sh` is for trying changes.
+
+| Script | Installs | Use it when |
+|---|---|---|
+| `./install.sh` | the package built from what is **pushed to GitHub** (`git pull`, `makepkg -sf`, `pacman -U`). pacman owns the files, and `pacman -Q bluos-tui-git` shows the version. | you use the app, and after you have pushed a change |
+| `./dev.sh` | your **working copy**: copies `bin/bluos` straight to `/usr/bin/bluos` with `sudo install`, uncommitted changes included. | you want to try a change before committing it |
+
+A typical change:
+
+1. Edit `bin/bluos`.
+2. Try it: run `bin/bluos` from the repo (nothing installed), or `./dev.sh` to have it as `bluos` everywhere.
+3. Commit and push.
+4. `./install.sh` puts the packaged version back. It takes over the files `dev.sh` copied (`pacman -U --overwrite`); without that, pacman refuses with "exists in filesystem".
+
+Good to know:
+
+- `makepkg` writes the new `pkgver` (e.g. `r6.cce9dd8`) into `PKGBUILD`. Commit it as `chore: opdater pkgver fra makepkg`.
+- After `./dev.sh`, `pacman -Qkk bluos-tui-git` reports the files as modified. That is expected until the next `./install.sh`.
+- Version bump: change `app="bluos X.Y.Z"` in `bin/bluos`, commit, add an annotated tag `vX.Y.Z` and push with `git push --follow-tags`.
 
 ## License
 
