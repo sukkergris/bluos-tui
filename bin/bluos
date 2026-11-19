@@ -12,6 +12,7 @@ set -euo pipefail
 (( BASH_VERSINFO[0] >= 5 )) || { echo "bluos needs bash >= 5 (macOS: brew install bash)" >&2; exit 1; }
 self=$(readlink -f "${BASH_SOURCE[0]}")
 app="bluos 1.7.0"  # name and version shown at the top of the UI
+B=$'\e[1m' N=$'\e[22m'  # bold on / off: the current tab in the labels is bold
 
 # Config: host=<player IP>, share=<SMB share on the player> (default "shared"). Written when a player is chosen.
 config=${XDG_CONFIG_HOME:-$HOME/.config}/bluos/config
@@ -194,21 +195,21 @@ player_info() {  # $1 = IP
 nth() { if [[ $(st scope) == artist ]]; then echo 1; else echo 2; fi; }
 to_albums() {  # $1 = action after reload (pos or first)
     put tab albums
-    echo "reload-sync(cat $BLUOS_DIR/albums)+$1+change-nth($(nth))+change-prompt($(st scope)> )+change-preview-window(right,45%)+change-border-label: $app │ [ Albums (ga) ]  Tracks  Players (gS) "
+    echo "reload-sync(cat $BLUOS_DIR/albums)+$1+change-nth($(nth))+change-prompt($(st scope)> )+change-preview-window(right,45%)+change-border-label: $app │ ${B}[ Albums (ga) ]${N}  Tracks  Players (gS) "
 }
 to_tracks() {  # $1 = artist, $2 = album, $3 = browseKey, $4 = index in the album list
     put tab tracks; put album "$3"; put apos "$4"
-    echo "clear-query+reload-sync($self _tracks)+first+change-nth(1)+change-prompt(track> )+change-preview-window(hidden)+change-border-label: $app │ Albums (ga)  [ $1 – $2 ]  Players (gS) "
+    echo "clear-query+reload-sync($self _tracks)+first+change-nth(1)+change-prompt(track> )+change-preview-window(hidden)+change-border-label: $app │ Albums (ga)  ${B}[ $1 – $2 ]${N}  Players (gS) "
 }
 to_songs() {
     put tab songs
     [[ -s $BLUOS_DIR/songs ]] || songs >"$BLUOS_DIR/songs"
-    echo "reload-sync(cat $BLUOS_DIR/songs)+first+change-nth(1)+change-prompt(track> )+change-preview-window(hidden)+change-border-label: $app │ Albums (ga)  [ All tracks ]  Players (gS) "
+    echo "reload-sync(cat $BLUOS_DIR/songs)+first+change-nth(1)+change-prompt(track> )+change-preview-window(hidden)+change-border-label: $app │ Albums (ga)  ${B}[ All tracks ]${N}  Players (gS) "
 }
 to_players() {
     put tab players
     [[ -s $BLUOS_DIR/players ]] || players >"$BLUOS_DIR/players"
-    echo "clear-query+reload-sync(cat $BLUOS_DIR/players)+first+change-nth(1)+change-prompt(player> )+change-preview-window(right,45%)+change-border-label: $app │ Albums (ga)  Tracks  [ Players (gS) ] "
+    echo "clear-query+reload-sync(cat $BLUOS_DIR/players)+first+change-nth(1)+change-prompt(player> )+change-preview-window(right,45%)+change-border-label: $app │ Albums (ga)  Tracks  ${B}[ Players (gS) ]${N} "
 }
 back_to_albums() {
     [[ $(st scope) == track ]] && put scope album
@@ -350,7 +351,7 @@ r  s  R               players: scan network · shuffle · repeat
 key="transform($self _key {k} {1} {2} {4} {n})"
 fzf <"$BLUOS_DIR/albums" --listen="$BLUOS_DIR/fzf.sock" --no-input --ansi --id-nth=3 \
     --delimiter=$'\t| ‒ ' --with-nth=1,2 --nth=2 --prompt 'album> ' \
-    --layout=reverse --border --border-label " $app │ [ Albums (ga) ]  Tracks  Players (gS) " \
+    --layout=reverse --border --border-label " $app │ ${B}[ Albums (ga) ]${N}  Tracks  Players (gS) " \
     --header "$help" --footer ' ' --footer-border=top --footer-label ' Press ? for shortcuts ' \
     --bind 'start:toggle-header,?:toggle-header' \
     --preview "$self _preview {4}" --preview-window=right,45% \
