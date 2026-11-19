@@ -152,19 +152,24 @@ year() {  # $1 = browseKey
         grep -om1 '^[0-9]\{4\}' || echo 9999
 }
 
-# Sorted by artist, year, album
+# Sorted by artist, year, album. Progress goes to stderr (on one line, cleared at the end).
 load_albums() {
-    local a b p k y years=$cache/years-$BLUOS_HOST.tsv smb
+    local a b p k y years=$cache/years-$BLUOS_HOST.tsv smb n=0 msg cols
+    cols=$(tput cols 2>/dev/null || echo 80)
     mkdir -p "$cache"; touch "$years"
+    echo "Loading albums from $BLUOS_HOST…" >&2
     smb=$(smb_root)
     album_rows | while IFS=$'\t' read -r a b p k; do
         y=$(awk -F'\t' -v k="$k" '$1 == k { print $2; exit }' "$years")
         if [[ -z $y ]]; then
+            printf -v msg 'Reading release year %d (first start only): %s – %s' $((++n)) "$a" "$b"
+            printf '\r\e[K%s' "${msg:0:cols-1}" >&2  # cut to one line, so \r can overwrite it
             y=$(year "$k")
             printf '%s\t%s\n' "$k" "$y" >>"$years"
         fi
         printf '%s\t%s\t%s\t%s\t%s\n' "$a" "$y" "$b" "$p" "$k"
     done | sort -f -t$'\t' -k1,1 -k2,2 -k3,3 | awk -F'\t' -v OFS='\t' '{print $1 " ‒ " $3, $4, $5}' >"$BLUOS_DIR/albums"
+    printf '\r\e[K' >&2
 }
 
 # Players on the network; ▶ = the chosen one
@@ -237,6 +242,7 @@ fi
 
 # First run: use the first player found and save it
 if [[ -z $BLUOS_HOST && ${1:-} != @(scan|help|-h|--help) ]]; then
+    echo "Searching the network for BluOS players…" >&2
     BLUOS_HOST=$(scan | head -1 | cut -d' ' -f1)
     [[ -n $BLUOS_HOST ]] || { echo "No BluOS player found; set host= in $config" >&2; exit 1; }
     save_config
@@ -273,7 +279,7 @@ case "${1:-}" in
     _enter)  # $2 = {3}: playURL, or IP on the Players tab (switch player, save it and load its library)
         if [[ $(st tab) == players ]]; then
             put host "$2"; BLUOS_HOST=$2; save_config
-            load_albums; rm -f "$BLUOS_DIR/songs" "$BLUOS_DIR/players"; put apos 0
+            load_albums 2>/dev/null; rm -f "$BLUOS_DIR/songs" "$BLUOS_DIR/players"; put apos 0
             back_to_albums
         else
             blu "$2" >/dev/null; echo "refresh-preview+transform-footer($self _now)"
