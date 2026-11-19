@@ -11,7 +11,7 @@
 set -euo pipefail
 (( BASH_VERSINFO[0] >= 5 )) || { echo "bluos needs bash >= 5 (macOS: brew install bash)" >&2; exit 1; }
 self=$(readlink -f "${BASH_SOURCE[0]}")
-app="bluos 1.4.0"  # name and version shown at the top of the UI
+app="bluos 1.5.0"  # name and version shown at the top of the UI
 
 # Config: host=<player IP>, share=<SMB share on the player> (default "shared"). Written when a player is chosen.
 config=${XDG_CONFIG_HOME:-$HOME/.config}/bluos/config
