@@ -221,12 +221,19 @@ Usage: bluos [command]
   next | prev   next / previous track
   vol [N|+N|-N] show or set volume
   status        show what is playing
+  use IP        switch to the player at IP and save it
   scan          list BluOS players on the local network
   albums        list albums in the library
 
 Config: $config (host=, share=)
 EOF
 }
+
+# "bluos use <IP>": switch to that player (checked below, saved in the case)
+if [[ ${1:-} == use ]]; then
+    [[ -n ${2:-} ]] || { echo "Usage: bluos use <IP>" >&2; exit 1; }
+    BLUOS_HOST=$2
+fi
 
 # First run: use the first player found and save it
 if [[ -z $BLUOS_HOST && ${1:-} != @(scan|help|-h|--help) ]]; then
@@ -237,7 +244,7 @@ fi
 
 # Fail early with a clear message when the player doesn't answer (e.g. it got a new IP from DHCP)
 if [[ ${1:-} != @(scan|help|-h|--help|_*) ]] && ! blu SyncStatus >/dev/null; then
-    echo "bluos: no answer from player at $BLUOS_HOST:11000. If its IP changed, run 'bluos scan' and set host= in $config" >&2
+    echo "bluos: no answer from player at $BLUOS_HOST:11000. If its IP changed, run 'bluos scan' and 'bluos use <IP>'" >&2
     exit 1
 fi
 
@@ -256,6 +263,7 @@ case "${1:-}" in
         exit ;;
     status) now; exit ;;
     scan)   scan | sort -t. -k4,4n; exit ;;
+    use)    save_config; echo "Using $BLUOS_HOST (saved in $config)"; exit ;;
     albums) album_rows | sort -f -t$'\t' -k1,1 -k2,2 | awk -F'\t' '{print $1 " – " $2}'; exit ;;
     # Internal sub-calls from fzf
     _cmd) blu "$2" >/dev/null; exit ;;
