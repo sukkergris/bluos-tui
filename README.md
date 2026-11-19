@@ -22,10 +22,11 @@ Tested on Arch Linux. macOS, Debian/Ubuntu and Fedora are supported but not test
 sudo pacman -S --needed git base-devel
 git clone https://github.com/sukkergris/bluos-tui.git ~/Code/bluos-tui
 cd ~/Code/bluos-tui
-makepkg -si          # installs the dependencies and bluos to /usr/bin
+./install.sh         # installs the dependencies and bluos to /usr/bin
 ```
 
-Update: `cd ~/Code/bluos-tui && git pull && makepkg -si`
+Update or reinstall: `~/Code/bluos-tui/install.sh` (runs `git pull` and `makepkg -sif`; it builds what is pushed to GitHub, not local changes)
+Development: `./dev.sh` copies the local `bin/bluos` to `/usr/bin/bluos`, uncommitted changes included. Run `./install.sh` to go back to the packaged version.
 Uninstall: `sudo pacman -R bluos-tui-git`
 
 ### macOS
