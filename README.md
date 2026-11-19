@@ -111,6 +111,7 @@ bluos albums       # albums in the library
 | `j` / `k`, `gg` / `G`, `ctrl-d` / `ctrl-u` | Move |
 | `l` / `h` | Albums ⇄ the album's tracks |
 | `gt` / `gT` | Tabs: Albums → Tracks → Players |
+| `ga` / `gS` | Go to: Albums · Players |
 | `/` · `tab` · `esc` | Search · cycle album/artist/track (all tracks) · back to key mode |
 | `?` | Show/hide shortcuts |
 | `enter` | Play album, or the album from the selected track · choose player |

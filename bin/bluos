@@ -298,6 +298,8 @@ case "${1:-}" in
         case "$2$pending" in
             g0) put g "$ms" ;;
             g1) echo first ;;
+            a1) [[ $tab != albums ]] && back_to_albums ;;  # ga, gS: straight to a tab
+            S1) [[ $tab != players ]] && to_players ;;
             t1) case $tab in albums) to_tracks "$3" "$4" "$5" "$6" ;; tracks | songs) to_players ;; *) back_to_albums ;; esac ;;
             T1) case $tab in albums) to_players ;; *) back_to_albums ;; esac ;;
             l?) [[ $tab == albums ]] && to_tracks "$3" "$4" "$5" "$6" ;;
@@ -335,10 +337,11 @@ load_albums
 "$self" _ticker &
 trap 'kill $! 2>/dev/null; rm -rf "$BLUOS_DIR"' EXIT
 
-keys='j,k,g,G,h,l,t,T,r,s,R,space,n,p,+,-,q,/,?'
+keys='j,k,g,G,h,l,t,T,r,s,R,a,S,space,n,p,+,-,q,/,?'
 help='j/k  ctrl-d/u  gg/G   move · half page · top/bottom
 l/h                   albums ⇄ tracks
 gt/gT                 tabs: albums → tracks → players
+ga  gS                go to: albums · players
 /  tab  esc           search · cycle album/artist/track · back
 enter                 play album / from track · choose player
 space  n/p  +/-       pause · next/previous · volume
@@ -353,7 +356,7 @@ fzf <"$BLUOS_DIR/albums" --listen="$BLUOS_DIR/fzf.sock" --no-input --ansi --id-n
     --preview "$self _preview {4}" --preview-window=right,45% \
     --bind 'j:down,k:up,G:last,q:abort,ctrl-d:half-page-down,ctrl-u:half-page-up' \
     --bind "g:${key//\{k\}/g},t:${key//\{k\}/t},T:${key//\{k\}/T},h:${key//\{k\}/h},l:${key//\{k\}/l}" \
-    --bind "r:${key//\{k\}/r},s:${key//\{k\}/s},R:${key//\{k\}/R}" \
+    --bind "r:${key//\{k\}/r},s:${key//\{k\}/s},R:${key//\{k\}/R},a:${key//\{k\}/a},S:${key//\{k\}/S}" \
     --bind "tab:transform($self _scope)" \
     --bind "enter:transform($self _enter {3})" \
     --bind "space:execute-silent($self _cmd 'Pause?toggle=1')+refresh-preview+transform-footer($self _now)" \
