@@ -199,7 +199,11 @@ to_albums() {  # $1 = action after reload (pos or first)
 }
 to_tracks() {  # $1 = artist, $2 = album, $3 = browseKey, $4 = index in the album list
     put tab tracks; put album "$3"; put apos "$4"
-    echo "clear-query+reload-sync($self _tracks)+first+change-nth(1)+change-prompt(track> )+change-preview-window(hidden)+change-border-label: $app │ Albums (ga)  ${B}[ $1 – $2 ]${N}  Players (gS) "
+    # fzf breaks the border when it has to cut a too long label itself, so the title is cut here to fit the width
+    local t="$1 – $2" max=$(( ${FZF_COLUMNS:-80} - ${#app} - 38 ))
+    (( max < 2 )) && max=2
+    (( ${#t} > max )) && t="${t:0:max-1}…"
+    echo "clear-query+reload-sync($self _tracks)+first+change-nth(1)+change-prompt(track> )+change-preview-window(hidden)+change-border-label: $app │ Albums (ga)  ${B}[ $t ]${N}  Players (gS) "
 }
 to_songs() {
     put tab songs
