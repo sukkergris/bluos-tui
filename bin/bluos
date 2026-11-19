@@ -229,7 +229,7 @@ Usage: bluos [command]
   (none)        open the UI
   play | pause  start / pause playback
   next | prev   next / previous track
-  vol [N|+N|-N] show or set volume
+  vol [N|+N|-N|+|-] show or set volume (+/-: step 1 below 10, else 3)
   status        show what is playing
   use IP        switch to the player at IP and save it
   scan          list BluOS players on the local network
@@ -268,6 +268,8 @@ case "${1:-}" in
     vol)
         case ${2:-} in
             "") printf '%s\n' "$(volume)" ;;
+            +) v=$(volume); blu "Volume?level=$(( v + (v < 10 ? 1 : 3) ))" >/dev/null ;;   # fine steps at low volume
+            -) v=$(volume); blu "Volume?level=$(( v - (v <= 10 ? 1 : 3) ))" >/dev/null ;;
             [+-]*) blu "Volume?level=$(( $(volume) + $2 ))" >/dev/null ;;
             *) blu "Volume?level=$2" >/dev/null ;;
         esac
@@ -367,7 +369,7 @@ fzf <"$BLUOS_DIR/albums" --listen="$BLUOS_DIR/fzf.sock" --no-input --ansi --id-n
     --bind "space:execute-silent($self _cmd 'Pause?toggle=1')+refresh-preview+transform-footer($self _now)" \
     --bind "n:execute-silent($self _cmd Skip)+refresh-preview" \
     --bind "p:execute-silent($self _cmd Back)+refresh-preview" \
-    --bind "+:execute-silent($self vol +5)+transform-footer($self _now)" \
-    --bind "-:execute-silent($self vol -5)+transform-footer($self _now)" \
+    --bind "+:execute-silent($self vol +)+transform-footer($self _now)" \
+    --bind "-:execute-silent($self vol -)+transform-footer($self _now)" \
     --bind "/:show-input+unbind($keys)" \
     --bind "esc:hide-input+rebind($keys)"
