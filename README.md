@@ -87,6 +87,7 @@ On first run bluos uses the first player it finds and saves it in `~/.config/blu
 
 - **"bluos needs bash >= 5":** on macOS run `brew install bash` and make sure Homebrew's bin directory is first in `PATH`.
 - **"No BluOS player found":** the computer and player must be on the same /24 network, and port 11000 must not be blocked. Set `host=<player IP>` in `~/.config/bluos/config` (find the IP in your router or the BluOS app).
+- **"no answer from player at <IP>":** the player is off, or it got a new IP from DHCP. Run `bluos scan` and set the new `host=` in the config. To keep the IP fixed, reserve it in your router's DHCP. Use the MAC address the network actually sees, which you get from `ip neigh show <player IP>` (macOS: `arp -n <player IP>`). On Wi-Fi it can differ from the MAC the player reports in the BluOS app. After changing the reservation, restart the player by unplugging it for ~10 s.
 - **Albums are not sorted by year:** the year is read from the player's SMB share `//<player IP>/shared`. On Linux check that `gio mount -a smb://<player IP>/shared` works; on macOS that the share mounts under `~/.cache/bluos/`. If the share has another name (`smbclient -N -L //<player IP>`), set `share=` in the config. Then delete `~/.cache/bluos/years-*.tsv` so the years are read again.
 - **fzf error about unknown options (`--no-input`, `--footer`):** your fzf is older than 0.63.
 - **Empty album list:** the player has no local library, or it is still indexing – check the Library in the BluOS app.

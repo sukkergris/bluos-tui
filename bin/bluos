@@ -235,6 +235,12 @@ if [[ -z $BLUOS_HOST && ${1:-} != @(scan|help|-h|--help) ]]; then
     save_config
 fi
 
+# Fail early with a clear message when the player doesn't answer (e.g. it got a new IP from DHCP)
+if [[ ${1:-} != @(scan|help|-h|--help|_*) ]] && ! blu SyncStatus >/dev/null; then
+    echo "bluos: no answer from player at $BLUOS_HOST:11000. If its IP changed, run 'bluos scan' and set host= in $config" >&2
+    exit 1
+fi
+
 case "${1:-}" in
     help | -h | --help) usage; exit ;;
     play)   blu Play >/dev/null; exit ;;
