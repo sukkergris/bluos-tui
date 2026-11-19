@@ -99,7 +99,7 @@ now() {
             }
             split("▁ ▂ ▃ ▃ ▄ ▅ ▅ ▆ ▇ █", r, " "); vb = ""  # rising volume staircase, 10 steps
             for (i = 1; i <= 10; i++) vb = vb (v["volume"] >= i * 10 - 5 ? r[i] : "·")
-            print "  " (v["mute"] == 1 ? "mute" : "vol") " " vb " " v["volume"] "  " v["streamFormat"]
+            print "  " (v["mute"] == 1 ? "mute" : "vol") " " vb " " v["volume"] "  " v["streamFormat"] (v["sleep"] != "" ? "  sleep " v["sleep"] "m" : "")
         }'
 }
 
@@ -230,6 +230,7 @@ Usage: bluos [command]
   play | pause  start / pause playback
   next | prev   next / previous track
   vol [N|+N|-N|+|-] show or set volume (+/-: step 1 below 10, else 3)
+  sleep         cycle the sleep timer: 15 → 30 → 45 → 60 → 90 min → off
   status        show what is playing
   use IP        switch to the player at IP and save it
   scan          list BluOS players on the local network
@@ -274,6 +275,7 @@ case "${1:-}" in
             *) blu "Volume?level=$2" >/dev/null ;;
         esac
         exit ;;
+    sleep)  m=$(blu Sleep | sed -n 's:.*<sleep>\(.*\)</sleep>.*:\1:p'); echo "sleep ${m:-off}${m:+m}"; exit ;;
     status) now; exit ;;
     scan)   scan | sort -t. -k4,4n; exit ;;
     use)    save_config; echo "Using $BLUOS_HOST (saved in $config)"; exit ;;
@@ -344,7 +346,7 @@ load_albums
 "$self" _ticker &
 trap 'kill $! 2>/dev/null; rm -rf "$BLUOS_DIR"' EXIT
 
-keys='j,k,g,G,h,l,t,T,r,s,R,a,S,space,n,p,+,-,q,/,?'
+keys='j,k,g,G,h,l,t,T,r,s,R,a,S,space,n,p,+,-,z,q,/,?'
 help='j/k  ctrl-d/u  gg/G   move · half page · top/bottom
 l/h                   albums ⇄ tracks
 gt/gT                 tabs: albums → tracks → players
@@ -352,6 +354,7 @@ ga  gS                go to: albums · players
 /  tab  esc           search · cycle album/artist/track · back
 enter                 play album / from track · choose player
 space  n/p  +/-       pause · next/previous · volume
+z                     sleep timer: 15/30/45/60/90 min/off
 r  s  R               players: scan network · shuffle · repeat
 ?  q                  shortcuts · quit'
 key="transform($self _key {k} {1} {2} {4} {n})"
@@ -371,5 +374,6 @@ fzf <"$BLUOS_DIR/albums" --listen="$BLUOS_DIR/fzf.sock" --no-input --ansi --id-n
     --bind "p:execute-silent($self _cmd Back)+refresh-preview" \
     --bind "+:execute-silent($self vol +)+transform-footer($self _now)" \
     --bind "-:execute-silent($self vol -)+transform-footer($self _now)" \
+    --bind "z:execute-silent($self sleep)+transform-footer($self _now)" \
     --bind "/:show-input+unbind($keys)" \
     --bind "esc:hide-input+rebind($keys)"

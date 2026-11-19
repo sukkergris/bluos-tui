@@ -99,7 +99,8 @@ On first run bluos uses the first player it finds and saves it in `~/.config/blu
 bluos              # open the UI
 bluos play|pause   # start / pause
 bluos next|prev    # next / previous track
-bluos vol [N|+N|-N]
+bluos vol [N|+N|-N|+|-]   # +/-: step 1 below 10, otherwise 3
+bluos sleep        # cycle the sleep timer: 15 → 30 → 45 → 60 → 90 min → off
 bluos status       # what is playing
 bluos scan         # BluOS players on the local network
 bluos use <IP>     # switch player and save it in the config
@@ -116,7 +117,8 @@ bluos albums       # albums in the library
 | `?` | Show/hide shortcuts |
 | `enter` | Play album, or the album from the selected track · choose player |
 | `r` · `s` · `R` | Players tab: rescan · toggle shuffle · cycle repeat (queue → track → off) |
-| `space` · `n` / `p` · `+` / `-` | Pause · next/previous · volume ±5 |
+| `space` · `n` / `p` · `+` / `-` | Pause · next/previous · volume (step 1 below 10, otherwise 3) |
+| `z` | Sleep timer: 15 → 30 → 45 → 60 → 90 min → off (shown in the footer) |
 | `q` | Quit |
 
 ## Config
