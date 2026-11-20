@@ -129,37 +129,48 @@ songs() {
         done
 }
 
-# Local path of the player's SMB share //host/<share>, mounted if needed (gvfs on Linux, mount_smbfs on macOS)
-smb_root() {
+# Local path of the SMB share //$1/$2, mounted if needed (gvfs on Linux, mount_smbfs on macOS).
+# The player's own share is mounted as guest; network shares use the login saved in the keyring/keychain.
+smb_root() {  # $1 = host, $2 = share
     if [[ $OSTYPE == darwin* ]]; then
-        local dir=$cache/smb-$BLUOS_HOST-$share
+        local dir=$cache/smb-$1-$2 user
+        [[ $1 == "$BLUOS_HOST" ]] && user=guest@
         mkdir -p "$dir"
-        mount | grep -qF " on $dir " || mount_smbfs -N "//guest@$BLUOS_HOST/$share" "$dir" &>/dev/null || true
+        mount | grep -qF " on $dir " || mount_smbfs -N "//$user$1/$2" "$dir" &>/dev/null || true
         echo "$dir"
     else
-        gio mount -a "smb://$BLUOS_HOST/$share" </dev/null &>/dev/null || true
-        echo "/run/user/$UID/gvfs/smb-share:server=$BLUOS_HOST,share=$share"
+        local dir="/run/user/$UID/gvfs/smb-share:server=$1,share=$2" anon=()
+        [[ $1 == "$BLUOS_HOST" ]] && anon=(-a)
+        [[ -d $dir ]] || gio mount "${anon[@]}" "smb://$1/$2" </dev/null &>/dev/null || true
+        echo "$dir"
     fi
 }
 
-# Release year from the first track's tags via the player's SMB share (/var/mnt/SMB-*/ = //host/<share>/).
+# Local path of a track's file= path. USB drive: /var/mnt/SMB-<id>/ = the player's share //player/<share>/.
+# Network share added in BluOS: /var/mnt/<host>-<share>/ = //<host>/<share>/.
+local_file() {  # $1 = file path on the player
+    local d=${1#/var/mnt/} hs
+    hs=${d%%/*}
+    if [[ $hs == SMB-* ]]; then echo "$(smb_root "$BLUOS_HOST" "$share")/${d#*/}"
+    else echo "$(smb_root "${hs%%-*}" "${hs#*-}")/${d#*/}"; fi
+}
+
+# Release year from the first track's tags, read over SMB.
 # ~0.3 s per album over the network, so years are cached per browseKey (delete the file to re-read); unknown = 9999 (last).
 year() {  # $1 = browseKey
     local f
     f=$(browse "$1" | grep -om1 'file=[^"&]*' || true)
     f=$(urldecode "${f#file=}")
-    ffprobe -v quiet -show_entries format_tags=date,year -of default=nw=1:nk=1 \
-        "$smb/${f#/var/mnt/SMB-*/}" |
+    ffprobe -v quiet -show_entries format_tags=date,year -of default=nw=1:nk=1 "$(local_file "$f")" |
         grep -om1 '^[0-9]\{4\}' || echo 9999
 }
 
 # Sorted by artist, year, album. Progress goes to stderr (on one line, cleared at the end).
 load_albums() {
-    local a b p k y years=$cache/years-$BLUOS_HOST.tsv smb n=0 msg cols
+    local a b p k y years=$cache/years-$BLUOS_HOST.tsv n=0 msg cols
     cols=$(tput cols 2>/dev/null || echo 80)
     mkdir -p "$cache"; touch "$years"
     echo "Loading albums from $BLUOS_HOST…" >&2
-    smb=$(smb_root)
     album_rows | while IFS=$'\t' read -r a b p k; do
         y=$(awk -F'\t' -v k="$k" '$1 == k { print $2; exit }' "$years")
         if [[ -z $y ]]; then
