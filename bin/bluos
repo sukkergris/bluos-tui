@@ -200,6 +200,7 @@ player_info() {  # $1 = IP
     printf '%-10s %s\n' Name "$(a name)" Model "$(a brand) $(a modelName)" Firmware "$(a version)" \
         IP "$1" MAC "$(a mac)" Volume "$(a volume)" "" "" \
         Shuffle "${shuf[$(tag shuffle)]:-?}   (s toggles)" Repeat "${rep[$(tag repeat)]:-?}   (R cycles)"
+    printf '%-10s %s\n' Years "$(cat "$cache/years-$1.tsv" 2>/dev/null | wc -l) albums cached   (c clears)"
 }
 
 # Views: print fzf actions. The label is set last with "action:text", so parentheses in names don't break it.
@@ -326,6 +327,8 @@ case "${1:-}" in
             h?) [[ $tab != albums ]] && back_to_albums ;;
             # Players tab: r rescans, s/R toggles shuffle/repeat on the player under the cursor ($5 = IP)
             r?) [[ $tab == players ]] && { players >"$BLUOS_DIR/players"; echo "reload-sync(cat $BLUOS_DIR/players)"; } ;;
+            # c clears the player's year cache; the years are read again when it is chosen (enter) or on the next start
+            c?) [[ $tab == players ]] && { rm -f "$cache/years-$5.tsv"; echo refresh-preview; } ;;
             s? | R?)
                 if [[ $tab == players ]]; then
                     BLUOS_HOST=$5 status=$(blu Status)
@@ -357,7 +360,7 @@ load_albums
 "$self" _ticker &
 trap 'kill $! 2>/dev/null; rm -rf "$BLUOS_DIR"' EXIT
 
-keys='j,k,g,G,h,l,t,T,r,s,R,a,S,space,n,p,+,-,z,q,/,?'
+keys='j,k,g,G,h,l,t,T,r,s,R,c,a,S,space,n,p,+,-,z,q,/,?'
 help='j/k  ctrl-d/u  gg/G   move · half page · top/bottom
 l/h                   albums ⇄ tracks
 gt/gT                 tabs: albums → tracks → players
@@ -366,7 +369,7 @@ ga  gS                go to: albums · players
 enter                 play album / from track · choose player
 space  n/p  +/-       pause · next/previous · volume
 z                     sleep timer: 15/30/45/60/90 min/off
-r  s  R               players: scan network · shuffle · repeat
+r  s  R  c            players: scan network · shuffle · repeat · clear year cache
 ?  q                  shortcuts · quit'
 key="transform($self _key {k} {1} {2} {4} {n})"
 fzf <"$BLUOS_DIR/albums" --listen="$BLUOS_DIR/fzf.sock" --no-input --ansi --id-nth=3 \
@@ -377,7 +380,7 @@ fzf <"$BLUOS_DIR/albums" --listen="$BLUOS_DIR/fzf.sock" --no-input --ansi --id-n
     --preview "$self _preview {4}" --preview-window=right,45% \
     --bind 'j:down,k:up,G:last,q:abort,ctrl-d:half-page-down,ctrl-u:half-page-up' \
     --bind "g:${key//\{k\}/g},t:${key//\{k\}/t},T:${key//\{k\}/T},h:${key//\{k\}/h},l:${key//\{k\}/l}" \
-    --bind "r:${key//\{k\}/r},s:${key//\{k\}/s},R:${key//\{k\}/R},a:${key//\{k\}/a},S:${key//\{k\}/S}" \
+    --bind "r:${key//\{k\}/r},s:${key//\{k\}/s},R:${key//\{k\}/R},c:${key//\{k\}/c},a:${key//\{k\}/a},S:${key//\{k\}/S}" \
     --bind "tab:transform($self _scope)" \
     --bind "enter:transform($self _enter {3})" \
     --bind "space:execute-silent($self _cmd 'Pause?toggle=1')+refresh-preview+transform-footer($self _now)" \

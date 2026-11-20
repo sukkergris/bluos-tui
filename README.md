@@ -116,7 +116,7 @@ bluos albums       # albums in the library
 | `/` · `tab` · `esc` | Search · cycle album/artist/track (all tracks) · back to key mode |
 | `?` | Show/hide shortcuts |
 | `enter` | Play album, or the album from the selected track · choose player |
-| `r` · `s` · `R` | Players tab: rescan · toggle shuffle · cycle repeat (queue → track → off) |
+| `r` · `s` · `R` · `c` | Players tab: rescan · toggle shuffle · cycle repeat (queue → track → off) · clear the player's year cache (read again on `enter` or next start) |
 | `space` · `n` / `p` · `+` / `-` | Pause · next/previous · volume (step 1 below 10, otherwise 3) |
 | `z` | Sleep timer: 15 → 30 → 45 → 60 → 90 min → off (shown in the footer) |
 | `q` | Quit |
@@ -135,7 +135,7 @@ share=shared        # the player's SMB share for its USB drive (used to read rel
 ## How it works
 
 - **API:** the BluOS HTTP API on port 11000. The library is only served per letter section via `/Browse` (`/Albums` answers empty), so sections are fetched one by one.
-- **Sorting:** albums are sorted by artist, release year and album. BluOS does not expose the year, so it is read with `ffprobe` from the first track's tags over SMB (mounted with `gio mount` on Linux, `mount_smbfs` under `~/.cache/bluos/` on macOS). In `file=`, `/var/mnt/SMB-<id>/` is the player's USB drive and maps to its share `//<player>/<share>/`; `/var/mnt/<host>-<share>/` is a network share and maps to `//<host>/<share>/`. That takes ~0.3 s per album, so years are cached in `~/.cache/bluos/years-<host>.tsv`; delete it to re-read (e.g. after fixing tags). Albums without a year sort last for their artist.
+- **Sorting:** albums are sorted by artist, release year and album. BluOS does not expose the year, so it is read with `ffprobe` from the first track's tags over SMB (mounted with `gio mount` on Linux, `mount_smbfs` under `~/.cache/bluos/` on macOS). In `file=`, `/var/mnt/SMB-<id>/` is the player's USB drive and maps to its share `//<player>/<share>/`; `/var/mnt/<host>-<share>/` is a network share and maps to `//<host>/<share>/`. That takes ~0.3 s per album, so years are cached in `~/.cache/bluos/years-<host>.tsv`; press `c` on the Players tab (or delete the file) to re-read, e.g. after fixing tags or moving the music. Albums without a year sort last for their artist.
 - **Structure:** the script calls itself (`_enter`, `_key`, `_scope`, `_tracks`, `_preview`, `_now`, …) from fzf key bindings. State (active tab, chosen album, position, album list) lives in `$XDG_RUNTIME_DIR/bluos-<pid>/`. The chosen player is kept in the state file `host`, so all sub-calls and the ticker follow along when it changes.
 - **Tabs and `g` combos:** fzf only knows single keys, so `g`/`t`/`T`/`h`/`l` go through `_key`, which prints fzf actions (`transform`). `g` stores a timestamp; if `g`/`t`/`T` follows within 1 s it becomes `gg`/`gt`/`gT` (like vim's `timeoutlen`).
 - **Search:** rows have artist and album in separate fzf fields (separated by `‒`, U+2012, which rarely appears in names), so `tab` can switch `--nth` between album (field 2) and artist (field 1). "track" switches to a list of all tracks, fetched from the Song sections the first time and cached. The query is kept when switching.
